@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+
+# Check dependencies
+if ! command -v curl >/dev/null; then
+  echo "springinit: curl is required"
+  exit 1
+fi
+if ! command -v jq >/dev/null; then
+  echo "springinit: jq is required"
+  exit 1
+fi
+
+# Change current work directory if the user pass it as a argument
+if [[ -n "$1" ]]; then
+  if [[ ! -d "$1" ]]; then
+    echo "springinit: Invalid path: $1"
+    exit 1
+  fi
+  cd "$1"
+fi
+
+# Read the Spring Initialiazr API metadata. This return a JSON wich informs the parameters and possible
+# values that we can use. The information about version seans to be wrong, to avoid confusion, the default
+# version are always used.
+spring_json="$(curl -s https://start.spring.io/metadata/client)"
+
+# This function receives three parameters: the first is the prompt; the second is the jq format string to
+# find the default value of a parameter; the third is the jq format to find all possible valids for it.
+function select_value() {
+  local prompt=$1
+  local default=$(echo $spring_json | jq -r $2)
+  local parameters=($(echo $spring_json | jq -r $3))
+
+  local user_input
+
+  while true; do
+    read -p "$prompt (${parameters[*]}) [$default]: " user_input
+    [[ -z "$user_input" ]] || printf "%s\n" "${parameters[@]}" | grep -Fxq "$user_input" && break
+  done
+
+  [[ -z "$user_input" ]] && echo "$default" || echo "$user_input"
+}
+
+# This functions it's pretty similar to the previous one, except that it's not expect predetermined values.
+function get_entry() {
+  local prompt=$1
+  local default=$2
+
+  local user_input
+
+  while true; do
+    read -p "$prompt [$default]: " user_input
+
+    if [[ -z "$user_input" ]]; then
+      echo "$default"
+      return
+    fi
+
+    [[ ! "$user_input" == *" "* ]] && break
+  done
+
+  echo $user_input
+}
+
+# It's self explanatory.
+function get_dependencies() {
+  local user_input
+
+  while true; do
+    read -p "Dependencies (type -l for list all): " user_input
+
+    [[ -z "$user_input" ]] && break
+
+    # List all dependencies avaliable
+    if [[ "$user_input" == "-l" ]]; then
+      declare -a types="($(echo $spring_json | jq -r '.dependencies.values[].name | @sh'))"
+
+      for i in "${types[@]}"; do
+        echo "$i:"
+        printf "\t%s\n" $(echo $spring_json | jq -r --arg name "$i" '.dependencies.values[] | select(.name == $name) | .values[].id')
+      done
+
+      continue
+    fi
+
+    local json=$(echo $spring_json | jq -r '.dependencies.values[].values[].id')
+    local arr=($user_input)
+    local err=false
+
+    # Check if all entries are valid dependencies
+    for i in "${arr[@]}"; do
+      if ! printf "%s\n" "${json[@]}" | grep -Fxq "$i"; then
+        err=true
+        echo "Error: Invalid dependencie: $i"
+      fi
+    done
+
+    [[ $err == false ]] && break
+  done
+
+  # Format the output transforming all spaces in commas
+  dependencies=$(
+    echo "$user_input" | awk '{
+    for(i=1;i<=NF;i++)
+      printf "%s%s",
+      $i,
+      (i<NF ? "," : "\n")
+    }'
+  )
+}
+
+while true; do
+  type=$(select_value Type ".type.default" ".type.values[].id")
+  language=$(select_value Language ".language.default" ".language.values[].id")
+  group=$(get_entry Group "com.example")
+  artifact=$(get_entry Artifact "demo")
+  name=$(get_entry Name "$artifact")
+  package=$(get_entry "Package Name" $(printf "%s.%s" "$group" "$artifact"))
+  packaging=$(select_value Packaging ".packaging.default" ".packaging.values[].id")
+  java=$(select_value Java ".javaVersion.default" ".javaVersion.values[].id")
+  get_dependencies
+
+  printf "%-12s: %s\n" "Type" "$type"
+  printf "%-12s: %s\n" "Language" "$language"
+  printf "%-12s: %s\n" "Group" "$group"
+  printf "%-12s: %s\n" "Artifact" "$artifact"
+  printf "%-12s: %s\n" "Name" "$name"
+  printf "%-12s: %s\n" "Package name" "$package"
+  printf "%-12s: %s\n" "Packaging" "$packaging"
+  printf "%-12s: %s\n" "Java" "$java"
+  printf "%-12s: %s\n" "dependencies" "$dependencies"
+
+  $user_input
+  read -p "OK? (y/n) [y]: " user_input
+  [[ "$user_input" != "n" ]] && break
+done
+
+# Do the request with the user's arguments. First, use cURL to
+# make the HTTP request, this must return a .tgz file, second
+# extract the file with TAR.
+if ! curl -# https://start.spring.io/starter.tgz \
+  -d baseDir="$name" \
+  -d applicationName="${name^}Application" \
+  -d artifactId="$artifact" \
+  -d groupId="$group" \
+  -d javaVersion="$java" \
+  -d language="$language" \
+  -d name="$name" \
+  -d description="${name^}%20application" \
+  -d packageName="$package" \
+  -d packaging="$packaging" \
+  -d type="$type" \
+  -d dependencies="$dependencies" |
+  tar -xzf - >/dev/null 2>&1
+then
+  echo "springinit: Failed to download or extract project"
+  exit 1
+fi
+
+echo "Spring project successesful created"
