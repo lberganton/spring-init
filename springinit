@@ -109,12 +109,19 @@ function get_dependencies() {
   )
 }
 
+function get_description {
+  read -p "Description [$1]: " description
+  [[ -z "$description" ]] && description="$1"
+  echo $description
+}
+
 while true; do
   type=$(select_value Type ".type.default" ".type.values[].id")
   language=$(select_value Language ".language.default" ".language.values[].id")
   group=$(get_entry Group "com.example")
   artifact=$(get_entry Artifact "demo")
   name=$(get_entry Name "$artifact")
+  description=$(get_description "${name^} application")
   package=$(get_entry "Package Name" $(printf "%s.%s" "$group" "$artifact"))
   packaging=$(select_value Packaging ".packaging.default" ".packaging.values[].id")
   java=$(select_value Java ".javaVersion.default" ".javaVersion.values[].id")
@@ -125,6 +132,7 @@ while true; do
   printf "%-12s: %s\n" "Group" "$group"
   printf "%-12s: %s\n" "Artifact" "$artifact"
   printf "%-12s: %s\n" "Name" "$name"
+  printf "%-12s: %s\n" "Description" "$description"
   printf "%-12s: %s\n" "Package name" "$package"
   printf "%-12s: %s\n" "Packaging" "$packaging"
   printf "%-12s: %s\n" "Java" "$java"
@@ -146,7 +154,7 @@ if ! curl -# https://start.spring.io/starter.tgz \
   -d javaVersion="$java" \
   -d language="$language" \
   -d name="$name" \
-  -d description="${name^}%20application" \
+  -d description="$description" \
   -d packageName="$package" \
   -d packaging="$packaging" \
   -d type="$type" \
